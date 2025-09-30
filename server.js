@@ -284,7 +284,10 @@ setInterval(() => {
 }, 1000);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`服务器运行在端口 ${PORT}`);
-    console.log(`访问 http://localhost:${PORT} 开始游戏`);
+const HOST = process.env.HOST || '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+    console.log(`服务器运行在 ${HOST}:${PORT}`);
+    console.log(`本机访问: http://localhost:${PORT}`);
+    console.log(`局域网访问: http://[你的IP地址]:${PORT}`);
 });
