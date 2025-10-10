@@ -22,7 +22,7 @@
                     <li>每轮有一名玩家负责画图</li>
                     <li>其他玩家在聊天框中猜词</li>
                     <li>猜对得分，画家也会得分</li>
-                    <li>每轮限时60秒</li>
+                    <li>每轮限时60秒，首位猜对者将立刻进入下一轮（抢答模式）</li>
                     <li>游戏进行3轮</li>
                 </ul>
             </div>
@@ -40,6 +40,13 @@
             <div class="game-status">
                 <div id="current-word-display"></div>
                 <div id="game-message"></div>
+                <!-- 仅房主可见的房间控制 -->
+                <div id="host-controls" class="hidden">
+                    <label for="input-max-rounds">设置总轮数:</label>
+                    <input id="input-max-rounds" type="number" min="1" max="20" value="3" style="width: 64px;" />
+                    <button id="btn-set-rounds">应用</button>
+                    <span id="host-badge" title="你是房主">👑</span>
+                </div>
             </div>
         </div>
 

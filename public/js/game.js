@@ -11,6 +11,9 @@ class GuessDrawGame {
         this.playerName = '';
         this.isCurrentDrawer = false;
         this.gameState = {};
+    // 本地倒计时（用于显示，每秒更新一次）
+    this.timerInterval = null;
+    this.localTimeLeftMs = 0;
         
         this.initializeElements();
         this.bindEvents();
@@ -34,6 +37,10 @@ class GuessDrawGame {
         this.timeLeft = document.getElementById('time-left');
         this.currentWordDisplay = document.getElementById('current-word-display');
         this.gameMessage = document.getElementById('game-message');
+    // 房主控制
+    this.hostControls = document.getElementById('host-controls');
+    this.inputMaxRounds = document.getElementById('input-max-rounds');
+    this.btnSetRounds = document.getElementById('btn-set-rounds');
         
         // 画布和工具
         this.canvas = document.getElementById('drawing-canvas');
@@ -108,6 +115,9 @@ class GuessDrawGame {
 
         // 新游戏事件
         this.newGameButton.addEventListener('click', () => this.startNewGame());
+
+    // 房主设置轮数
+    this.btnSetRounds.addEventListener('click', () => this.setMaxRounds());
     }
 
     getTouchPos(e) {
@@ -198,9 +208,12 @@ class GuessDrawGame {
         this.currentRoomId.textContent = gameState.roomId;
         this.currentRound.textContent = gameState.roundNumber;
         this.maxRounds.textContent = gameState.maxRounds;
+    // 房主控制显示与输入值同步
+    const isHost = gameState.hostId === this.playerId;
+    this.toggleHostControls(isHost, gameState.maxRounds);
         
-        // 更新时间
-        this.updateTimeDisplay(gameState.timeLeft);
+    // 更新/启动本地倒计时显示
+    this.setupLocalTimer(gameState);
         
         // 更新玩家列表
         this.updatePlayersList(gameState.players);
@@ -225,8 +238,56 @@ class GuessDrawGame {
         }
     }
 
+    toggleHostControls(isHost, maxRounds) {
+        if (!this.hostControls) return;
+        if (isHost) {
+            this.hostControls.classList.remove('hidden');
+            if (typeof maxRounds === 'number') {
+                this.inputMaxRounds.value = maxRounds;
+            }
+        } else {
+            this.hostControls.classList.add('hidden');
+        }
+    }
+
+    setMaxRounds() {
+        if (!this.socket) return;
+        const value = parseInt(this.inputMaxRounds.value, 10);
+        if (isNaN(value)) return;
+        this.socket.emit('set-max-rounds', { maxRounds: value });
+    }
+
+    setupLocalTimer(gameState) {
+        // 每次收到服务端状态都重置一次本地计时，避免不同步
+        this.clearLocalTimer();
+        if (gameState.gameState === 'playing') {
+            // 以服务端给的剩余毫秒为准启动本地倒计时
+            this.localTimeLeftMs = Math.max(0, gameState.timeLeft | 0);
+            // 立即刷新一次显示
+            this.updateTimeDisplay(this.localTimeLeftMs);
+            // 每秒递减并更新显示，直到归零
+            this.timerInterval = setInterval(() => {
+                this.localTimeLeftMs = Math.max(0, this.localTimeLeftMs - 1000);
+                this.updateTimeDisplay(this.localTimeLeftMs);
+                if (this.localTimeLeftMs <= 0) {
+                    this.clearLocalTimer();
+                }
+            }, 1000);
+        } else {
+            // 非进行中状态显示0或保持
+            this.updateTimeDisplay(0);
+        }
+    }
+
+    clearLocalTimer() {
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+        }
+    }
+
     updateTimeDisplay(timeLeft) {
-        const seconds = Math.ceil(timeLeft / 1000);
+    const seconds = Math.ceil(timeLeft / 1000);
         this.timeLeft.textContent = Math.max(0, seconds);
         
         if (seconds <= 10 && seconds > 0) {
