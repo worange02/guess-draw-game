@@ -43,6 +43,10 @@ class Room {
         this.scores = new Map();
         this.roundNumber = 0;
         this.maxRounds = 3;
+    // 标记当前回合是否仍在进行（用于抢答模式防止重复结算）
+    this.roundActive = false;
+    // 房主（第一个加入房间的人）
+    this.hostId = null;
     }
 
     addPlayer(playerId, playerName) {
@@ -54,6 +58,10 @@ class Room {
         };
         this.players.set(playerId, player);
         this.scores.set(playerId, 0);
+        // 设置房主：首个加入者
+        if (!this.hostId) {
+            this.hostId = playerId;
+        }
         
         if (this.players.size >= 2 && this.gameState === 'waiting') {
             this.startNextRound();
@@ -66,6 +74,12 @@ class Room {
         this.players.delete(playerId);
         this.scores.delete(playerId);
         
+        // 房主离开则转移房主给仍在房间的第一位玩家
+        if (this.hostId === playerId) {
+            const nextHost = this.players.keys().next();
+            this.hostId = nextHost && !nextHost.done ? nextHost.value : null;
+        }
+
         if (this.currentDrawer === playerId) {
             this.startNextRound();
         }
@@ -100,10 +114,15 @@ class Room {
         this.roundStartTime = Date.now();
         this.gameState = 'playing';
         this.drawingData = [];
+        this.roundActive = true;
     }
 
     checkGuess(playerId, message) {
         const player = this.players.get(playerId);
+        // 非进行中的回合或重复/非法判定直接忽略
+        if (this.gameState !== 'playing' || !this.roundActive) {
+            return false;
+        }
         if (!player || player.hasGuessed || playerId === this.currentDrawer) {
             return false;
         }
@@ -122,14 +141,8 @@ class Room {
                 this.scores.set(this.currentDrawer, drawer.score);
             }
 
-            // 检查是否所有人都猜对了
-            const allGuessed = Array.from(this.players.values())
-                .filter(p => p.id !== this.currentDrawer)
-                .every(p => p.hasGuessed);
-
-            if (allGuessed) {
-                setTimeout(() => this.startNextRound(), 3000);
-            }
+            // 抢答模式：首个正确答案即结束本轮，防止后续再触发
+            this.roundActive = false;
 
             return true;
         }
@@ -145,7 +158,8 @@ class Room {
             gameState: this.gameState,
             roundNumber: this.roundNumber,
             maxRounds: this.maxRounds,
-            timeLeft: Math.max(0, this.roundDuration - (Date.now() - this.roundStartTime))
+            timeLeft: Math.max(0, this.roundDuration - (Date.now() - this.roundStartTime)),
+            hostId: this.hostId
         };
     }
 }
@@ -226,11 +240,18 @@ io.on('connection', (socket) => {
         const isCorrect = room.checkGuess(socket.id, message);
         
         if (isCorrect) {
+            // 告知谁抢答成功和本轮答案
             io.to(socket.roomId).emit('correct-guess', {
                 playerId: socket.id,
                 playerName: player.name,
                 word: room.currentWord
             });
+
+            // 抢答成功后立即进入下一轮
+            room.startNextRound();
+            // 可选：清空画布，避免上一轮残留（如不需要可移除下一行）
+            io.to(socket.roomId).emit('clear-canvas');
+            // 广播新的游戏状态（新画家/新词/新计时）
             io.to(socket.roomId).emit('game-state', room.getGameState());
         } else {
             // 只有非画家的消息才会被广播（隐藏答案）
@@ -243,6 +264,32 @@ io.on('connection', (socket) => {
                 });
             }
         }
+    });
+
+    // 房主设置本局游戏的轮数
+    socket.on('set-max-rounds', (data) => {
+        const room = rooms.get(socket.roomId);
+        if (!room) return;
+
+        // 权限校验：仅房主可设置
+        if (socket.id !== room.hostId) {
+            return;
+        }
+
+        const { maxRounds } = data || {};
+        let value = parseInt(maxRounds, 10);
+        if (isNaN(value)) return;
+        // 合理边界，避免过大或无效（1-20 可自行调整）
+        value = Math.max(1, Math.min(20, value));
+        room.maxRounds = value;
+
+        // 若当前轮次已超过新上限，立即结束本局
+        if (room.roundNumber > room.maxRounds) {
+            room.gameState = 'ended';
+            room.roundActive = false;
+        }
+
+        io.to(socket.roomId).emit('game-state', room.getGameState());
     });
 
     // 断开连接
@@ -272,7 +319,7 @@ io.on('connection', (socket) => {
 // 定时检查房间状态
 setInterval(() => {
     rooms.forEach((room, roomId) => {
-        if (room.gameState === 'playing') {
+    if (room.gameState === 'playing' && room.roundActive) {
             const timeLeft = room.roundDuration - (Date.now() - room.roundStartTime);
             if (timeLeft <= 0) {
                 room.startNextRound();
